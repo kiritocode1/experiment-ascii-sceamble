@@ -29,8 +29,8 @@ export default function Page() {
         <section className="space-y-6">
           <ASCIIText className="text-base leading-relaxed"
           duration={2800}
-          waveSpeed={120}
-          spread={0.2}
+          waveSpeed={190}
+          spread={0.9}
           
           >
             The universe is made of stories, not of atoms. Each moment we spend exploring the cosmos reveals new mysteries waiting to be unraveled. The stars whisper secrets to those who listen, painting the night sky with ancient light that has traveled millions of years to reach our eyes.
@@ -39,9 +39,9 @@ export default function Page() {
           <ASCIIText
             className="text-base leading-relaxed"
             duration={2000}
-            waveSpeed={120}
+            waveSpeed={190}
 
-            spread={0.2}
+            spread={0.9}
           >
             In the depths of digital space, characters dance and transform, creating ripples of meaning that cascade through the void of the screen. Each keystroke echoes through the silicon corridors, leaving traces of thought encoded in the fabric of the machine.
           </ASCIIText>

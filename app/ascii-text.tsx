@@ -4,285 +4,173 @@ import React, {
   useRef,
   useEffect,
   useCallback,
-  useLayoutEffect,
+  useState,
   type HTMLAttributes,
+  type CSSProperties,
 } from "react"
 import { cn } from "@/lib/utils"
 
 // Constants for wave animation behavior
-const WAVE_THRESH = 40 // pixel threshold for wave edge effect
+const WAVE_THRESH = 50
 const CHAR_MULT = 2
 const ANIM_STEP = 35
 
-interface CharPosition {
+interface Wave {
   x: number
-  y: number
-  char: string
-}
-
-interface Wave2D {
-  x: number // pixel x position
-  y: number // pixel y position
   startTime: number
   id: number
 }
 
-interface ASCIITextProps extends Omit<HTMLAttributes<HTMLElement>, "children"> {
+// ============================================================================
+// ASCIILine - Core component for single-line text animation
+// ============================================================================
+
+interface ASCIILineProps {
   children: string
-  /** Animation duration in ms (default: auto-scales with text length) */
   duration?: number
-  /** Character set to use for scrambling */
   chars?: string
-  /** Whether to preserve spaces during animation */
   preserveSpaces?: boolean
-  /** Wave speed - higher = faster wave expansion (default 100) */
   waveSpeed?: number
-  /** Wave spread - affects how wide the wave ring is (default 1.0) */
   spread?: number
-  /** Render as a different element */
-  as?: "p" | "span" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "div" | "label"
+  className?: string
+  style?: CSSProperties
+  /** Callback to propagate wave to adjacent lines */
+  onWaveExit?: (direction: "up" | "down", x: number) => void
+  /** Receive wave from adjacent line */
+  incomingWave?: { x: number; from: "up" | "down" } | null
 }
 
-export function ASCIIText({
+function ASCIILine({
   children,
   duration: durationProp,
   chars = '.,·-─~+:;=*π""░▒▓█▄▀▌▐■!?&#$@0123456789*',
   preserveSpaces = true,
   waveSpeed: waveSpeedProp,
   spread = 1.0,
-  as: Component = "p",
   className,
-  ...props
-}: ASCIITextProps) {
-  const elRef = useRef<HTMLElement>(null)
+  style,
+  onWaveExit,
+  incomingWave,
+}: ASCIILineProps) {
+  const containerRef = useRef<HTMLSpanElement>(null)
+  const innerRef = useRef<HTMLSpanElement>(null)
 
-  // Mutable refs for animation state (no React re-renders during animation)
+  // Animation state refs
   const origTxtRef = useRef(children)
-  const origCharsRef = useRef(children.split(""))
-  const charPositionsRef = useRef<CharPosition[]>([])
-  const isAnimRef = useRef(false)
-  const cursorRef = useRef({ x: 0, y: 0 })
-  const wavesRef = useRef<Wave2D[]>([])
-  const animIdRef = useRef<number | null>(null)
+  const wavesRef = useRef<Wave[]>([])
+  const cursorRef = useRef({ x: 0 })
   const isHoverRef = useRef(false)
-  const origDimensionsRef = useRef<{ width: number; height: number } | null>(null)
-  const measurerRef = useRef<HTMLElement | null>(null)
+  const isAnimRef = useRef(false)
+  const animIdRef = useRef<number | null>(null)
+  const charWidthRef = useRef(0)
 
-  // Auto-scale duration based on text length
   const textLength = children.length
-  const duration =
-    durationProp ?? Math.max(800, Math.min(textLength * 6, 2000))
+  const duration = durationProp ?? Math.max(800, Math.min(textLength * 8, 2000))
   const waveSpeed = (waveSpeedProp ?? 100) / 100
 
-  /**
-   * Measure character positions using individual span elements
-   */
-  const measureCharPositions = useCallback(() => {
-    const el = elRef.current
-    if (!el) return
+  // Measure average character width
+  const measureCharWidth = useCallback(() => {
+    const container = containerRef.current
+    if (!container) return
 
-    const rect = el.getBoundingClientRect()
-    const style = window.getComputedStyle(el)
+    const rect = container.getBoundingClientRect()
+    charWidthRef.current = rect.width / Math.max(textLength, 1)
+  }, [textLength])
 
-    // Create or reuse measurer element
-    if (!measurerRef.current) {
-      measurerRef.current = document.createElement("div")
-      measurerRef.current.style.cssText = `
-        position: absolute;
-        visibility: hidden;
-        pointer-events: none;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-      `
-      document.body.appendChild(measurerRef.current)
-    }
-
-    const measurer = measurerRef.current
-    measurer.style.width = `${rect.width}px`
-    measurer.style.font = style.font
-    measurer.style.letterSpacing = style.letterSpacing
-    measurer.style.lineHeight = style.lineHeight
-    measurer.style.padding = style.padding
-
-    // Wrap each character in a span
-    const chars = origCharsRef.current
-    measurer.innerHTML = chars
-      .map(
-        (char, i) =>
-          `<span data-i="${i}" style="display:inline">${char === " " ? "&nbsp;" : char.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
-      )
-      .join("")
-
-    // Measure each character's position
-    const measurerRect = measurer.getBoundingClientRect()
-    const positions: CharPosition[] = []
-
-    const spans = measurer.querySelectorAll("span")
-    spans.forEach((span, i) => {
-      const spanRect = span.getBoundingClientRect()
-      positions.push({
-        x: spanRect.left - measurerRect.left + spanRect.width / 2,
-        y: spanRect.top - measurerRect.top + spanRect.height / 2,
-        char: chars[i],
-      })
-    })
-
-    charPositionsRef.current = positions
-  }, [])
-
-  /**
-   * 2D distance calculation
-   */
-  const distance2D = (x1: number, y1: number, x2: number, y2: number) => {
-    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-  }
-
-  /**
-   * Updates cursor position in 2D pixels
-   */
-  const updateCursorPos = useCallback((e: React.MouseEvent | MouseEvent) => {
-    const el = elRef.current
-    if (!el) return
-
-    const rect = el.getBoundingClientRect()
-    cursorRef.current = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    }
-  }, [])
-
-  /**
-   * Stops the animation and resets to original text
-   */
-  const stop = useCallback(() => {
-    const el = elRef.current
-    if (!el) return
-
-    el.textContent = origTxtRef.current
-    el.classList.remove("as")
-
-    // Reset dimensions
-    if (origDimensionsRef.current !== null) {
-      el.style.width = ""
-      el.style.height = ""
-      el.style.minHeight = ""
-      origDimensionsRef.current = null
-    }
-    isAnimRef.current = false
-  }, [])
-
-  /**
-   * Clean up expired waves
-   */
-  const cleanupWaves = useCallback(
-    (t: number) => {
-      wavesRef.current = wavesRef.current.filter(
-        (w) => t - w.startTime < duration
-      )
-    },
-    [duration]
-  )
-
-  /**
-   * Calculates wave effect for a character at given 2D position
-   */
+  // Calculate wave effect for a character at position x
   const calcWaveEffect = useCallback(
-    (
-      charPos: CharPosition,
-      charIdx: number,
-      t: number
-    ): { shouldAnim: boolean; char: string } => {
-      let shouldAnim = false
-      let resultChar = charPos.char
+    (charX: number, t: number): { active: boolean; char: string; originalChar: string } => {
+      const container = containerRef.current
+      if (!container) return { active: false, char: "", originalChar: "" }
 
-      // Get max possible distance (diagonal of container)
-      const el = elRef.current
-      if (!el) return { shouldAnim: false, char: resultChar }
+      const rect = container.getBoundingClientRect()
+      const maxDist = rect.width * spread
 
-      const rect = el.getBoundingClientRect()
-      const maxDist = Math.sqrt(rect.width ** 2 + rect.height ** 2) * spread
-
-      for (const w of wavesRef.current) {
-        const age = t - w.startTime
+      for (const wave of wavesRef.current) {
+        const age = t - wave.startTime
         const prog = Math.min((age * waveSpeed) / duration, 1)
-
-        // Calculate 2D distance from wave origin to character
-        const dist = distance2D(charPos.x, charPos.y, w.x, w.y)
-
-        // Wave radius expands over time
+        const dist = Math.abs(charX - wave.x)
         const radius = prog * maxDist
-
-        // Wave is a ring, not a filled circle
         const ringWidth = WAVE_THRESH * spread
 
+        // Check if char falls within the wave ring
         if (dist <= radius && dist > radius - ringWidth) {
-          shouldAnim = true
-
-          // How far into the ring are we? (0 = inner edge, 1 = outer edge)
           const posInRing = (radius - dist) / ringWidth
-
-          // Characters in the ring zone shift through character sequence
           if (posInRing > 0 && posInRing < 1) {
             const animStep = ANIM_STEP / waveSpeed
-            const idx =
-              (Math.floor(dist / 10) * CHAR_MULT + Math.floor(age / animStep)) %
-              chars.length
-            resultChar = chars[idx]
+            const idx = (Math.floor(dist / 10) * CHAR_MULT + Math.floor(age / animStep)) % chars.length
+            return { active: true, char: chars[idx], originalChar: "" }
           }
         }
       }
 
-      return { shouldAnim, char: resultChar }
+      return { active: false, char: "", originalChar: "" }
     },
-    [duration, waveSpeed, chars, spread]
+    [duration, waveSpeed, spread, chars]
   )
 
-  /**
-   * Generates scrambled text based on current waves using 2D positions
-   */
+  // Generate scrambled text
   const genScrambledTxt = useCallback(
     (t: number): string => {
-      const positions = charPositionsRef.current
-      if (positions.length === 0) return origTxtRef.current
+      const txt = origTxtRef.current
+      const charW = charWidthRef.current || 10
 
-      return positions
-        .map((pos, i) => {
-          if (preserveSpaces && pos.char === " ") return " "
-          const res = calcWaveEffect(pos, i, t)
-          return res.shouldAnim ? res.char : pos.char
+      return txt
+        .split("")
+        .map((char, i) => {
+          if (preserveSpaces && char === " ") return " "
+          const charX = i * charW + charW / 2
+          const result = calcWaveEffect(charX, t)
+          return result.active ? result.char : char
         })
         .join("")
     },
     [preserveSpaces, calcWaveEffect]
   )
 
-  /**
-   * Start the animation loop
-   */
-  const start = useCallback(() => {
-    if (isAnimRef.current) return
+  // Cleanup expired waves
+  const cleanupWaves = useCallback(
+    (t: number) => {
+      const container = containerRef.current
+      if (!container) return
 
-    const el = elRef.current
-    if (!el) return
+      const rect = container.getBoundingClientRect()
+      const maxDist = rect.width * spread
 
-    // Measure character positions before starting
-    measureCharPositions()
+      wavesRef.current = wavesRef.current.filter((w) => {
+        const age = t - w.startTime
+        const prog = Math.min((age * waveSpeed) / duration, 1)
+        const radius = prog * maxDist
 
-    // Preserve original dimensions to prevent layout shifts
-    if (origDimensionsRef.current === null) {
-      const rect = el.getBoundingClientRect()
-      origDimensionsRef.current = { width: rect.width, height: rect.height }
-      el.style.width = `${rect.width}px`
-      el.style.minHeight = `${rect.height}px`
+        // Check if wave should propagate to adjacent lines
+        if (onWaveExit && prog < 1) {
+          // Wave exits on the right
+          if (radius > rect.width && w.x < rect.width) {
+            // Could propagate down
+          }
+        }
+
+        return t - w.startTime < duration
+      })
+    },
+    [duration, waveSpeed, spread, onWaveExit]
+  )
+
+  // Stop animation
+  const stop = useCallback(() => {
+    if (innerRef.current) {
+      innerRef.current.textContent = origTxtRef.current
     }
+    isAnimRef.current = false
+  }, [])
 
-    isAnimRef.current = true
-    el.classList.add("as")
+  // Animation function ref (to avoid self-reference issues)
+  const animateFnRef = useRef<() => void>(() => {})
 
-    const animate = () => {
+  // Animation loop - defined separately and stored in ref
+  useEffect(() => {
+    animateFnRef.current = () => {
       const t = Date.now()
-
-      // Clean up expired waves first
       cleanupWaves(t)
 
       if (wavesRef.current.length === 0) {
@@ -290,115 +178,255 @@ export function ASCIIText({
         return
       }
 
-      // Generate scrambled text and update DOM directly
-      if (elRef.current) {
-        elRef.current.textContent = genScrambledTxt(t)
+      if (innerRef.current) {
+        innerRef.current.textContent = genScrambledTxt(t)
       }
-      animIdRef.current = requestAnimationFrame(animate)
+
+      animIdRef.current = requestAnimationFrame(animateFnRef.current)
     }
+  }, [cleanupWaves, genScrambledTxt, stop])
 
-    animIdRef.current = requestAnimationFrame(animate)
-  }, [cleanupWaves, genScrambledTxt, stop, measureCharPositions])
+  // Start animation
+  const start = useCallback(() => {
+    if (isAnimRef.current) return
+    measureCharWidth()
+    isAnimRef.current = true
+    animIdRef.current = requestAnimationFrame(animateFnRef.current)
+  }, [measureCharWidth])
 
-  /**
-   * Starts a new wave animation from current cursor position (2D)
-   */
-  const startWave = useCallback(() => {
-    wavesRef.current.push({
-      x: cursorRef.current.x,
-      y: cursorRef.current.y,
-      startTime: Date.now(),
-      id: Math.random(),
-    })
+  // Create wave at position
+  const createWave = useCallback(
+    (x: number) => {
+      wavesRef.current.push({
+        x,
+        startTime: Date.now(),
+        id: Math.random(),
+      })
+      if (!isAnimRef.current) start()
+    },
+    [start]
+  )
 
-    if (!isAnimRef.current) start()
-  }, [start])
+  // Update cursor
+  const updateCursor = useCallback((e: React.MouseEvent | MouseEvent) => {
+    const container = containerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    cursorRef.current.x = e.clientX - rect.left
+  }, [])
 
+  // Event handlers
   const handleEnter = useCallback(
     (e: React.MouseEvent) => {
       isHoverRef.current = true
-      updateCursorPos(e)
-      startWave()
+      updateCursor(e)
+      createWave(cursorRef.current.x)
     },
-    [updateCursorPos, startWave]
+    [updateCursor, createWave]
   )
 
   const handleMove = useCallback(
     (e: React.MouseEvent) => {
       if (!isHoverRef.current) return
-
       const oldX = cursorRef.current.x
-      const oldY = cursorRef.current.y
-      updateCursorPos(e)
-
-      // Only create new wave if mouse moved enough (prevents wave spam)
-      const moved = distance2D(
-        oldX,
-        oldY,
-        cursorRef.current.x,
-        cursorRef.current.y
-      )
-      if (moved > 15) {
-        startWave()
+      updateCursor(e)
+      if (Math.abs(cursorRef.current.x - oldX) > 15) {
+        createWave(cursorRef.current.x)
       }
     },
-    [updateCursorPos, startWave]
+    [updateCursor, createWave]
   )
 
   const handleLeave = useCallback(() => {
     isHoverRef.current = false
   }, [])
 
+  // Handle incoming waves from adjacent lines
+  useEffect(() => {
+    if (incomingWave) {
+      createWave(incomingWave.x)
+    }
+  }, [incomingWave, createWave])
+
   // Update refs when children change
   useEffect(() => {
     origTxtRef.current = children
-    origCharsRef.current = children.split("")
-    if (!isAnimRef.current && elRef.current) {
-      elRef.current.textContent = children
+    if (!isAnimRef.current && innerRef.current) {
+      innerRef.current.textContent = children
     }
-    // Re-measure positions when text changes
-    measureCharPositions()
-  }, [children, measureCharPositions])
+  }, [children])
 
-  // Initial measurement
-  useLayoutEffect(() => {
-    measureCharPositions()
-
-    // Re-measure on resize
-    const handleResize = () => measureCharPositions()
+  // Measure on mount
+  useEffect(() => {
+    measureCharWidth()
+    const handleResize = () => measureCharWidth()
     window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [measureCharWidth])
 
-    return () => {
-      window.removeEventListener("resize", handleResize)
-      // Cleanup measurer element
-      if (measurerRef.current) {
-        document.body.removeChild(measurerRef.current)
-        measurerRef.current = null
-      }
-    }
-  }, [measureCharPositions])
-
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (animIdRef.current !== null) {
+      if (animIdRef.current) {
         cancelAnimationFrame(animIdRef.current)
       }
     }
   }, [])
 
   return (
-    <Component
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ref={elRef as any}
-      className={cn("cursor-pointer select-none", className ?? "")}
+    <span
+      ref={containerRef}
+      className={cn("cursor-pointer select-none", className??"")}
+      style={{ display: "block", ...style }}
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
+    >
+      <span ref={innerRef}>{children}</span>
+    </span>
+  )
+}
+
+// ============================================================================
+// ASCIIText - Smart wrapper that splits text into lines
+// ============================================================================
+
+interface ASCIITextProps extends Omit<HTMLAttributes<HTMLElement>, "children"> {
+  children: string
+  duration?: number
+  chars?: string
+  preserveSpaces?: boolean
+  waveSpeed?: number
+  spread?: number
+  as?: "p" | "span" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "div" | "label"
+}
+
+export function ASCIIText({
+  children,
+  duration,
+  chars,
+  preserveSpaces,
+  waveSpeed,
+  spread,
+  as: Component = "p",
+  className,
+  ...props
+}: ASCIITextProps) {
+  const containerRef = useRef<HTMLElement>(null)
+  const [lines, setLines] = useState<string[]>([])
+  const [isReady, setIsReady] = useState(false)
+
+  // Split text into visual lines based on container width
+  const detectLines = useCallback(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const containerRect = container.getBoundingClientRect()
+    if (containerRect.width === 0) return
+
+    // Get computed styles
+    const style = window.getComputedStyle(container)
+
+    // Create a hidden measurer on document.body (avoids nesting issues)
+    const measurer = document.createElement("div")
+    measurer.style.cssText = `
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      width: ${containerRect.width}px;
+      font: ${style.font};
+      letter-spacing: ${style.letterSpacing};
+      line-height: ${style.lineHeight};
+      padding: ${style.padding};
+    `
+    document.body.appendChild(measurer)
+
+    // Wrap each word in a span to detect line breaks
+    const words = children.split(/(\s+)/)
+    measurer.innerHTML = words
+      .map((word, i) => `<span data-i="${i}">${word.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`)
+      .join("")
+
+    // Group words by their Y position
+    const wordSpans = measurer.querySelectorAll("span")
+    const lineGroups: Map<number, string[]> = new Map()
+
+    wordSpans.forEach((span) => {
+      const rect = span.getBoundingClientRect()
+      const y = Math.round(rect.top)
+
+      if (!lineGroups.has(y)) {
+        lineGroups.set(y, [])
+      }
+      lineGroups.get(y)!.push(span.textContent || "")
+    })
+
+    // Cleanup
+    document.body.removeChild(measurer)
+
+    // Sort by Y position and join words
+    const sortedLines = Array.from(lineGroups.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, words]) => words.join("").trim())
+      .filter((line) => line.length > 0)
+
+    // If no lines detected, use original text
+    if (sortedLines.length === 0) {
+      setLines([children])
+    } else {
+      setLines(sortedLines)
+    }
+
+    setIsReady(true)
+  }, [children])
+
+  // Detect lines on mount and resize
+  useEffect(() => {
+    // Use RAF to ensure layout is complete
+    const rafId = requestAnimationFrame(() => {
+      detectLines()
+    })
+
+    const handleResize = () => {
+      setIsReady(false)
+      requestAnimationFrame(detectLines)
+    }
+
+    window.addEventListener("resize", handleResize)
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener("resize", handleResize)
+    }
+  }, [detectLines])
+
+  return (
+    <Component
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ref={containerRef as any}
+      className={cn(className??"")}
       aria-label={children}
       {...props}
     >
-      {children}
+      {/* Render each line as its own ASCIILine component */}
+      {isReady ? (
+        lines.map((line, i) => (
+          <ASCIILine
+            key={`${i}-${line.slice(0, 20)}`}
+            duration={duration}
+            chars={chars}
+            preserveSpaces={preserveSpaces}
+            waveSpeed={waveSpeed}
+            spread={spread}
+          >
+            {line}
+          </ASCIILine>
+        ))
+      ) : (
+        // Show original text while measuring to prevent flash
+        <span>{children}</span>
+      )}
     </Component>
   )
 }
