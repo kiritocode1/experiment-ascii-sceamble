@@ -10,7 +10,8 @@ export default function Page() {
           <ASCIIText
             as="h1"
             className="text-2xl font-normal tracking-tight"
-            duration={800}
+            duration={2800}
+            waveSpeed={120}
             spread={0.2}
           >
             ASCII Fluid Text Component
@@ -26,7 +27,12 @@ export default function Page() {
 
         {/* Example paragraphs - 2D wave effect works on multi-line text */}
         <section className="space-y-6">
-          <ASCIIText className="text-base leading-relaxed">
+          <ASCIIText className="text-base leading-relaxed"
+          duration={2800}
+          waveSpeed={120}
+          spread={0.2}
+          
+          >
             The universe is made of stories, not of atoms. Each moment we spend exploring the cosmos reveals new mysteries waiting to be unraveled. The stars whisper secrets to those who listen, painting the night sky with ancient light that has traveled millions of years to reach our eyes.
           </ASCIIText>
 
@@ -34,6 +40,8 @@ export default function Page() {
             className="text-base leading-relaxed"
             duration={2000}
             waveSpeed={120}
+
+            spread={0.2}
           >
             In the depths of digital space, characters dance and transform, creating ripples of meaning that cascade through the void of the screen. Each keystroke echoes through the silicon corridors, leaving traces of thought encoded in the fabric of the machine.
           </ASCIIText>
@@ -71,6 +79,8 @@ export default function Page() {
                   className="text-sm hover:text-white transition-colors"
                   duration={1000}
                   waveSpeed={180}
+                  spread={0.2}
+                  chars="01"
                 >
                   {book}
                 </ASCIIText>
