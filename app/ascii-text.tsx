@@ -104,9 +104,13 @@ export function ASCIIText({
     let shouldAnim = false
     let resultChar = origCharsRef.current[charIdx]
 
+    // waveSpeed multiplier: 100 = normal, >100 = faster, <100 = slower
+    const speedMult = (waveSpeedProp ?? 100) / 100
+
     for (const w of wavesRef.current) {
       const age = t - w.startTime
-      const prog = Math.min(age / duration, 1)
+      // Apply waveSpeed to progression - faster speed = wave reaches edges sooner
+      const prog = Math.min((age * speedMult) / duration, 1)
       const dist = Math.abs(charIdx - w.startPos)
       const maxDist = Math.max(w.startPos, origCharsRef.current.length - w.startPos - 1)
       const rad = (prog * (maxDist + WAVE_BUF)) / spread
@@ -116,15 +120,17 @@ export function ASCIIText({
         const intens = Math.max(0, rad - dist)
 
         // Characters in the wave zone shift through character sequence
+        // waveSpeed also affects character cycling rate
         if (intens <= WAVE_THRESH && intens > 0) {
-          const idx = (dist * CHAR_MULT + Math.floor(age / ANIM_STEP)) % chars.length
+          const animStep = ANIM_STEP / speedMult // faster speed = quicker char cycling
+          const idx = (dist * CHAR_MULT + Math.floor(age / animStep)) % chars.length
           resultChar = chars[idx]
         }
       }
     }
 
     return { shouldAnim, char: resultChar }
-  }, [duration, spread, chars])
+  }, [duration, spread, chars, waveSpeedProp])
 
   /**
    * Generates scrambled text based on current waves

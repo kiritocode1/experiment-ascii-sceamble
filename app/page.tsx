@@ -11,7 +11,7 @@ export default function Page() {
             as="h1"
             className="text-2xl font-normal tracking-tight"
             duration={2800}
-            waveSpeed={120}
+            waveSpeed={80}
             spread={0.2}
           >
             ASCII Fluid Text Component
@@ -154,7 +154,7 @@ export default function Page() {
             <ASCIIText
               chars="·•○●◦◌"
               duration={1500}
-              waveSpeed={130}
+              waveSpeed={100}
               className="text-base"
             >
               Dot matrix style
