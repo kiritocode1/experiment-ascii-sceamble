@@ -313,8 +313,9 @@ export function ASCIIText({
   ...props
 }: ASCIITextProps) {
   const containerRef = useRef<HTMLElement>(null)
-  const [lines, setLines] = useState<string[]>([])
+  const [lines, setLines] = useState<string[]>([children])
   const [isReady, setIsReady] = useState(false)
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null)
 
   // Split text into visual lines based on container width
   const detectLines = useCallback(() => {
@@ -323,6 +324,10 @@ export function ASCIIText({
 
     const containerRect = container.getBoundingClientRect()
     if (containerRect.width === 0) return
+
+    // Capture current height before changing anything
+    const currentHeight = containerRect.height
+    setMeasuredHeight(currentHeight)
 
     // Get computed styles
     const style = window.getComputedStyle(container)
@@ -379,7 +384,14 @@ export function ASCIIText({
       setLines(sortedLines)
     }
 
-    setIsReady(true)
+    // Use RAF to release height lock after render
+    requestAnimationFrame(() => {
+      setIsReady(true)
+      // Release height lock after another frame to ensure smooth transition
+      requestAnimationFrame(() => {
+        setMeasuredHeight(null)
+      })
+    })
   }, [children])
 
   // Detect lines on mount and resize
@@ -391,6 +403,7 @@ export function ASCIIText({
 
     const handleResize = () => {
       setIsReady(false)
+      setMeasuredHeight(null)
       requestAnimationFrame(detectLines)
     }
 
@@ -401,32 +414,33 @@ export function ASCIIText({
     }
   }, [detectLines])
 
+  // Container style to prevent layout shift
+  const containerStyle: CSSProperties = measuredHeight !== null 
+    ? { minHeight: measuredHeight, height: measuredHeight }
+    : {}
+
   return (
     <Component
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ref={containerRef as any}
-      className={cn(className??"")}
+      className={cn(className ?? "")}
       aria-label={children}
+      style={containerStyle}
       {...props}
     >
-      {/* Render each line as its own ASCIILine component */}
-      {isReady ? (
-        lines.map((line, i) => (
-          <ASCIILine
-            key={`${i}-${line.slice(0, 20)}`}
-            duration={duration}
-            chars={chars}
-            preserveSpaces={preserveSpaces}
-            waveSpeed={waveSpeed}
-            spread={spread}
-          >
-            {line}
-          </ASCIILine>
-        ))
-      ) : (
-        // Show original text while measuring to prevent flash
-        <span>{children}</span>
-      )}
+      {/* Always render lines - start with single line containing full text */}
+      {lines.map((line, i) => (
+        <ASCIILine
+          key={isReady ? `ready-${i}-${line.slice(0, 20)}` : `init-${i}`}
+          duration={duration}
+          chars={chars}
+          preserveSpaces={preserveSpaces}
+          waveSpeed={waveSpeed}
+          spread={spread}
+        >
+          {line}
+        </ASCIILine>
+      ))}
     </Component>
   )
 }
