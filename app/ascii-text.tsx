@@ -276,8 +276,17 @@ function ASCIILine({
   return (
     <span
       ref={containerRef}
-      className={cn("cursor-pointer select-none", className??"")}
-      style={{ display: "block", ...style }}
+      className={cn("cursor-pointer select-none", className ?? "")}
+      style={{ 
+        display: "block",
+        // Use monospace to ensure all chars (including ASCII blocks) have equal width
+        fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+        // Add padding to account for taller ASCII block chars (█▀▄░▒▓■)
+        padding: "0.5em",
+        // Ensure consistent line-height that accommodates block chars
+        lineHeight: 1.3,
+        ...style 
+      }}
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
